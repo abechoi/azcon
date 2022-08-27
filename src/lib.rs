@@ -1,9 +1,7 @@
 pub mod azcon {
 
     use std::process::Command;
-    use std::time::Duration;
     use std::process::Output;
-    use std::thread;
 
     pub fn print_menu() {
 
@@ -11,7 +9,7 @@ pub mod azcon {
             "NONE".to_string()
         } else { get_current_context() };
     
-        println!("\n\
+        println!("\n\n\
         <<<<<<<<<<< AZCON MENU >>>>>>>>>>>\n\n\
         Currently connected to {}\n\
         1. Connect to cluster\n\
@@ -75,81 +73,146 @@ pub mod azcon {
 
         if check_namespace(&namespace) {
 
-            get_deployments(&namespace).await;
-
+            let _deployments: Vec<String> = get_deployments(&namespace).await;
             let pods: Vec<String> = get_pods(&namespace).await;
-    
             let hr: Vec<String> = get_hr(&namespace).await;
 
-            // components_report(hr, pods);
-            components_report(namespace, hr, pods);
+            if pods.len() > 0 || hr.len() > 0 {
+                components_report(&namespace, pods, hr).await;
+            }            
         }else {
             println!("Namespace not found, verify cluster.");
         }
     }
 
-    fn components_report(namespace: String, hr: Vec<String>, pods: Vec<String>) {
+    async fn components_report(namespace: &str, pods: Vec<String>, hr: Vec<String>) {
 
         let ref ns = namespace;
 
-        let mut i: usize = 1;
-        let mut report: String = String::new();
+        loop {
 
-        println!("\n\n<<<<<<<<<< HR COMPONENTS | PODS COMPONENTS >>>>>>>>>>\n");
-
-        for (i, line) in hr.iter().enumerate() {
-            println!("{}. {}", i + 1, line);
-        }
-        for (i, line) in pods.iter().enumerate() {
-            println!("{}. {}", i + 1 + hr.len(), line);
-        }
-        // helm status and helm history for hr
-        // describe pods for pods
-        let mut raw_input: String = String::new();
-        std::io::stdin().read_line(&mut raw_input).expect("Error: invalid choice...");
-
-        let input = raw_input.trim();
-        let range1 = 1..=hr.len();
-        let range2 = 1 + hr.len()..= pods.len() + hr.len();
-
-        if input.parse::<usize>().is_ok() && range1.contains(&input.parse::<usize>().unwrap()) {
-
-            let ref component_name = &hr[input.parse::<usize>().unwrap()-1];
-            get_status(ns.to_string(), component_name.to_string());
-            get_history(ns.to_string(), component_name.to_string());
+            print_components_report(pods.clone(), hr.clone());
             
-        } else if input.parse::<usize>().is_ok() && range2.contains(&input.parse::<usize>().unwrap()) {
+            // helm status and helm history for hr
+            // describe pods for pods
+            let mut raw_input: String = String::new();
+            std::io::stdin().read_line(&mut raw_input).expect("Error: invalid choice...");
 
-            let ref pod_name = &pods[input.parse::<usize>().unwrap()-1];
-            get_event(ns.to_string(), pod_name.to_string());
-        
-        } else {
-            println!("\nError: enter a number from the list\n\n<<<<< Go back");
+            let input = raw_input.trim();
+            let hr_range = 1..= hr.len();
+            let pods_range = 1 + hr.len()..= pods.len() + hr.len();
+            
+            if input.parse::<usize>().is_ok() {
+
+                if hr_range.contains(&input.parse::<usize>().unwrap()) {
+
+                    let ref component_name = &hr[input.parse::<usize>().unwrap()-1];
+                    get_history(ns.to_string(), component_name.to_string()).await;
+
+                } else if pods_range.contains(&input.parse::<usize>().unwrap()) {
+
+                    let ref pod_name = &pods[input.parse::<usize>().unwrap() - hr.len() - 1];
+                    get_events(ns.to_string(), pod_name.to_string()).await;
+
+                } else {
+                    println!("\nError: enter a number from the list\n\n<<<<< Go back");
+                }
+                
+            } else {
+                println!("\n\n<<<<< Go back");
+                break;
+            }
         }
     
     }
 
-    fn get_status(namespace: String, component_name: String) {
-        let output = Command::new("helm").arg("status").arg(component_name).arg("-n").arg(namespace).output().expect("ERROR");
-        let status = String::from_utf8(output.stdout).unwrap();
+    fn print_components_report(pods: Vec<String>, hr: Vec<String>) {
 
-        println!("{}", status);
+        let mut range = if hr.len() > pods.len() { 0..hr.len() } else { 0..pods.len() };
+
+
+        println!("\n\n<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<      COMPONENTS  REPORT      >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n");
+        println!("|                                   |                                                                        |");
+        println!("| For helm status and history:      | For pod events:                                                        |");
+        println!("|                                   |                                                                        |");
+
+        for i in &mut range {
+
+            if i < pods.len() && i < hr.len() {
+
+                println!("| {0: <2} {1: <30} | {2: <2} {3: <67} |", i + 1 , hr[i], i + 1 + hr.len(), pods[i]);
+
+            } else if i >= pods.len() && i < hr.len() {
+
+                println!("| {0: <2} {1: <30} |                                                                    |", i + 1 , hr[i]);
+
+            } else if i < pods.len() && i >= hr.len() {
+
+                println!("|                                   | {0: <2} {1: <67} |", i + 1 + hr.len(), pods[i]);
+            }
+        }
+        println!("\nany key to exit");
     }
 
-    fn get_history(namespace: String, component_name: String) {
-        let output = Command::new("helm").arg("history").arg(component_name).arg("-n").arg(namespace).output().expect("ERROR");
-        let history = String::from_utf8(output.stdout).unwrap();
+    async fn get_history(namespace: String, component_name: String) {
 
-        println!("{}", history);
+        // helm history admin-tenants --namespace servicetitan-halo -o=json
+        // helm history admin- --namespace servicetitan-eclipse 
+        let output: Output = Command::new("helm").arg("history").arg(&component_name).arg("--namespace").arg(&namespace).output().expect("ERROR");
+        let history: String = String::from_utf8(output.stdout).unwrap();
+
+        if history == "" {
+            println!("No history for component: {}", component_name);
+        } else {
+
+            println!("\n<<<<<<<<<<  HISTORY  >>>>>>>>>>\n");
+            println!("Namespace: {}", namespace);
+            println!("Component: {}\n", component_name);
+
+
+            for line in history.lines().skip(1) {
+
+                let v: Vec<_> = line.split_whitespace().into_iter().collect();
+
+                let revision: String = v[0].to_string();
+                let status: String = v[6].to_string();
+
+                let d: Vec<_> = v.into_iter().skip(9).collect();
+                let description: String = d.join(" ");
+
+                println!("Revision: {:<2} Status: {}\nDescription: {}\n", revision, status, description);
+
+            }
+        }
+        println!("\n\n<<<<< Go back");
     }
 
-    fn get_event(namespace: String, pod_name: String) {
+    async fn get_events(namespace: String, pod_name: String) {
 
         let field_selector: String = format!("involvedObject.name={}", pod_name);
-        let output: Output = Command::new("kubectl").arg("get").arg("event").arg("--namespace").arg(namespace).arg("--field-selector").arg(field_selector).output().expect("Cannot be found");
-        let event: String = String::from_utf8(output.stdout).unwrap();
 
-        println!("{}", event);
+        // output event in stringified json format
+        // kubectl get event --namespace <namespace> --field-selector involvedObject.name=<pod name>
+        let output: Output = Command::new("kubectl").arg("get").arg("event").arg("--namespace").arg(namespace).arg("--field-selector").arg(field_selector).output().expect("Cannot be found");
+        let events: String = String::from_utf8(output.stdout).unwrap();
+
+        if events == "" {
+            println!("No logs for pod: {}", pod_name);
+        } else {
+
+            println!("\n<<<<<<<<<<  EVENTS  >>>>>>>>>>\n");
+            println!("Pod Name: {}\n", pod_name);
+
+            for line in events.lines().skip(1) {
+
+                let v: Vec<_> = line.split_whitespace().into_iter().skip(4).collect();
+                let message: String = v.join(" ");
+
+                println!("Message: {}\n", message);
+            }
+        }
+        println!("\n\n<<<<< Go back");
+        
     }
 
     fn check_namespace(input: &str) -> bool {
@@ -157,7 +220,6 @@ pub mod azcon {
         println!("Searching cluster for namespace...");
 
         let output = Command::new("kubectl").arg("get").arg("namespaces").output().expect("Error: namespace does not exist.");
-        wait(1000);
         let content = String::from_utf8(output.stdout).unwrap();
 
         let mut is_true = false;
@@ -208,36 +270,29 @@ pub mod azcon {
     fn use_context(context: String) {
 
         Command::new("kubectl").arg("config").arg("use-context").arg(context).spawn().expect("ERROR");
-        wait(1000);
     }
 
     fn delete_context(context: String) {
 
         Command::new("kubectl").arg("config").arg("delete-context").arg(context).spawn().expect("ERROR");
-        wait(1000);
-    }
-    
-    fn wait(ms: u16) {
-        
-        let time: Duration = Duration::from_millis(ms.into());
-        thread::sleep(time);
     }
 
-    async fn get_deployments(input: &str) {
+    async fn get_deployments(input: &str) -> Vec<String> {
 
         let output: Output = Command::new("kubectl").arg("get").arg("deployments").arg("--namespace").arg(input).output().expect("ERROR");
-        wait(1000);
     
         let content: String = String::from_utf8(output.stdout).unwrap();
     
         let mut fail_count: i32 = 0;
         let mut deployments_summary: String = String::new();
+        let mut deployments: Vec<String> = Vec::<String>::new();
     
         for line in content.lines().skip(1) {            
             if line.contains("0/") {
                 fail_count += 1;
                 deployments_summary += line;
                 deployments_summary += "\n";
+                deployments.push(line.to_string());
             }
         }
         if fail_count == 0 {
@@ -246,12 +301,13 @@ pub mod azcon {
         println!("\n\
             <<<<<<<<<<<<<<<<<<<<<<<<<<<<<< DEPLOYMENTS SUMMARY >>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n\n\
             {}", deployments_summary);
+
+        deployments
     }
     
     async fn get_pods(input: &str) -> Vec<String> {
     
         let output: Output = Command::new("kubectl").arg("get").arg("pods").arg("--namespace").arg(input).output().expect("ERROR");
-        wait(1000);
     
         let content: String = String::from_utf8(output.stdout).unwrap();
     
@@ -281,7 +337,6 @@ pub mod azcon {
     async fn get_hr(input: &str) -> Vec<String> {
     
         let output: Output = Command::new("kubectl").arg("get").arg("hr").arg("--namespace").arg(input).output().expect("ERROR");
-        wait(1000);
     
         // content is the String version of Command
         let content: String = String::from_utf8(output.stdout).unwrap();
