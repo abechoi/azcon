@@ -49,15 +49,6 @@ Repeat step 2. and verify `/usr/local/bin` is inside the PATH. If so, restart th
 azcon
 ```
 
-If you do not have the `servicetitan/scripts` repo, clone it.
-```
-# change directory to ~/ServiceTitan
-cd ~/ServiceTitan
-
-# clone repo inside ~/ServiceTitan
-git clone https://github.com/servicetitan/scripts.git
-```
-
 
 ### How to Use
 
